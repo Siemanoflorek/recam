@@ -1,0 +1,39 @@
+workflows:
+  realcam-unsigned:
+    name: RealCam unsigned IPA
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    environment:
+      xcode: latest
+    scripts:
+      - name: Install XcodeGen
+        script: |
+          brew install xcodegen 2>/dev/null || brew upgrade xcodegen || true
+          xcodegen --version
+      - name: Generate Xcode project
+        script: |
+          cd ios
+          xcodegen generate
+      - name: Build archive (unsigned)
+        script: |
+          cd ios
+          xcodebuild \
+            -project RealCam.xcodeproj \
+            -scheme RealCam \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath build/RealCam.xcarchive \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            archive
+      - name: Package unsigned IPA
+        script: |
+          cd ios
+          mkdir -p build/Payload
+          cp -R build/RealCam.xcarchive/Products/Applications/RealCam.app build/Payload/
+          cd build
+          zip -r RealCam.ipa Payload >/dev/null
+          ls -lh RealCam.ipa
+    artifacts:
+      - ios/build/RealCam.ipa
