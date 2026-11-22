@@ -29,7 +29,6 @@ struct ContentView: View {
             }
         }
         .statusBarHidden(true)
-        .persistentSystemOverlays(.hidden)
         .contentShape(Rectangle())
         .onTapGesture(count: 3) { showStatus.toggle() }   // ukryty podgląd statusu
         .onAppear {
