@@ -4,6 +4,9 @@ import Foundation
 /// RealCam — nasłuch headless. Po starcie łączy się do przekaźnika w panelu
 /// (wss, przez internet), streamuje mikrofon i słucha komend start/stop z panelu.
 /// Działa w tle (tryb audio) i sam się łączy ponownie po zerwaniu sieci.
+///
+/// Pauza = przestaje WYSYŁAĆ dźwięk (mikrofon pozostaje aktywny, żeby wznowienie
+/// było natychmiastowe i niezawodne). Pomarańczowa kropka świeci też w pauzie.
 final class AudioStreamer: NSObject, ObservableObject {
 
     @Published var statusText = "Start…"
@@ -16,8 +19,6 @@ final class AudioStreamer: NSObject, ObservableObject {
     // =========================================================
 
     private var engine = AVAudioEngine()
-    private let silenceEngine = AVAudioEngine()   // cisza podtrzymująca życie w tle (bez mikrofonu)
-    private var silenceNode: AVAudioSourceNode?
     private var converter: AVAudioConverter?
     private let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: true)!
@@ -46,7 +47,7 @@ final class AudioStreamer: NSObject, ObservableObject {
         registerInterruptionHandler()
     }
 
-    // MARK: - WebSocket + automatyczne wznawianie
+    // MARK: - WebSocket + automatyczne wznawianie połączenia
     private func connect() {
         guard shouldRun, let url = URL(string: serverURL) else { return }
         let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
@@ -87,53 +88,14 @@ final class AudioStreamer: NSObject, ObservableObject {
         }
     }
 
-    /// Komendy z panelu: {"cmd":"stop"} / {"cmd":"start"}
+    /// Komendy z panelu: {"cmd":"stop"} / {"cmd":"start"}.
+    /// Pauza tylko wstrzymuje wysyłkę — mikrofon działa dalej, więc wznowienie jest pewne.
     private func handleCommand(_ text: String) {
         if text.contains("\"stop\"") {
-            DispatchQueue.main.async { self.paused = true;  self.statusText = "Zatrzymano (panel)"; self.pauseCapture() }
+            DispatchQueue.main.async { self.paused = true;  self.statusText = "Zatrzymano (panel)" }
         } else if text.contains("\"start\"") {
-            DispatchQueue.main.async { self.paused = false; self.statusText = "Nasłuch"; self.resumeCapture() }
+            DispatchQueue.main.async { self.paused = false; self.statusText = "Nasłuch" }
         }
-    }
-
-    // MARK: - Pauza / wznowienie (sterowanie z panelu)
-
-    /// Pauza: wyłącza mikrofon (pomarańczowa kropka gaśnie), ale podtrzymuje
-    /// działanie w tle cichym odtwarzaniem, żeby złapać komendę "wznów".
-    private func pauseCapture() {
-        engine.inputNode.removeTap(onBus: 0)
-        if engine.isRunning { engine.stop() }
-        startSilence()
-    }
-
-    /// Wznowienie: wyłącza ciszę i włącza mikrofon z powrotem (kropka wraca).
-    private func resumeCapture() {
-        stopSilence()
-        restartAudioWithRetry(0)   // ponawiaj — wejście bywa gotowe dopiero po chwili od zmiany kategorii
-    }
-
-    private func startSilence() {
-        let s = AVAudioSession.sharedInstance()
-        try? s.setCategory(.playback, mode: .default, options: [.mixWithOthers])
-        try? s.setActive(true)
-        if silenceNode == nil {
-            let fmt = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)!
-            let node = AVAudioSourceNode(format: fmt) { isSilence, _, _, abl -> OSStatus in
-                isSilence.pointee = true
-                let buffers = UnsafeMutableAudioBufferListPointer(abl)
-                for b in buffers { if let d = b.mData { memset(d, 0, Int(b.mDataByteSize)) } }
-                return noErr
-            }
-            silenceNode = node
-            silenceEngine.attach(node)
-            silenceEngine.connect(node, to: silenceEngine.mainMixerNode, format: fmt)
-        }
-        silenceEngine.prepare()
-        try? silenceEngine.start()
-    }
-
-    private func stopSilence() {
-        if silenceEngine.isRunning { silenceEngine.stop() }
     }
 
     // MARK: - Audio
@@ -145,7 +107,6 @@ final class AudioStreamer: NSObject, ObservableObject {
             try s.setActive(true)
         } catch { setStatus("Błąd sesji audio"); return }
 
-        // Świeży silnik — po przełączeniu sesji w pauzie (.playback) stary input bywa nieświeży.
         engine = AVAudioEngine()
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
@@ -160,8 +121,7 @@ final class AudioStreamer: NSObject, ObservableObject {
     }
 
     private func handle(buffer: AVAudioPCMBuffer, inputFormat: AVAudioFormat) {
-        // W pauzie trzymamy mikrofon aktywny (żeby żyć w tle i łapać "start"),
-        // ale nie wysyłamy dźwięku.
+        // W pauzie mikrofon działa, ale nie wysyłamy — nic nie leci do panelu.
         guard !paused, connected, !sending, let ws = webSocket, let converter else { return }
 
         let ratio = targetFormat.sampleRate / inputFormat.sampleRate
@@ -197,9 +157,8 @@ final class AudioStreamer: NSObject, ObservableObject {
         if type == .began {
             engine.inputNode.removeTap(onBus: 0)
             if engine.isRunning { engine.stop() }
-            stopSilence()
         } else if type == .ended {
-            if paused { startSilence() } else { restartAudioWithRetry(0) }
+            restartAudioWithRetry(0)
         }
     }
 
