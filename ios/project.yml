@@ -11,10 +11,10 @@ targets:
     platform: iOS
     sources:
       - Sources
-    info:
-      path: Info.plist
     settings:
       base:
+        # Użyj NASZEGO Info.plist (z uprawnieniami), nie generowanego przez XcodeGen
+        INFOPLIST_FILE: Info.plist
         PRODUCT_BUNDLE_IDENTIFIER: com.realcam.app
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
