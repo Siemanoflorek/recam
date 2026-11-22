@@ -15,7 +15,7 @@ final class AudioStreamer: NSObject, ObservableObject {
         "wss://realiveserwis.pl/ws/realcam?role=phone&token=__REALCAM_TOKEN__"
     // =========================================================
 
-    private let engine = AVAudioEngine()
+    private var engine = AVAudioEngine()
     private let silenceEngine = AVAudioEngine()   // cisza podtrzymująca życie w tle (bez mikrofonu)
     private var silenceNode: AVAudioSourceNode?
     private var converter: AVAudioConverter?
@@ -109,7 +109,7 @@ final class AudioStreamer: NSObject, ObservableObject {
     /// Wznowienie: wyłącza ciszę i włącza mikrofon z powrotem (kropka wraca).
     private func resumeCapture() {
         stopSilence()
-        startAudio()
+        restartAudioWithRetry(0)   // ponawiaj — wejście bywa gotowe dopiero po chwili od zmiany kategorii
     }
 
     private func startSilence() {
@@ -138,18 +138,20 @@ final class AudioStreamer: NSObject, ObservableObject {
 
     // MARK: - Audio
     private func startAudio() {
+        sending = false
         let s = AVAudioSession.sharedInstance()
         do {
             try s.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .allowBluetooth])
             try s.setActive(true)
         } catch { setStatus("Błąd sesji audio"); return }
 
+        // Świeży silnik — po przełączeniu sesji w pauzie (.playback) stary input bywa nieświeży.
+        engine = AVAudioEngine()
         let input = engine.inputNode
         let inputFormat = input.outputFormat(forBus: 0)
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else { return }
         converter = AVAudioConverter(from: inputFormat, to: targetFormat)
 
-        input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
             self?.handle(buffer: buffer, inputFormat: inputFormat)
         }
