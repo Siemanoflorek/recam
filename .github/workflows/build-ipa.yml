@@ -1,0 +1,49 @@
+name: Build unsigned IPA
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Build archive (unsigned)
+        working-directory: ios
+        run: |
+          xcodebuild \
+            -project RealCam.xcodeproj \
+            -scheme RealCam \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath build/RealCam.xcarchive \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            archive
+
+      - name: Package unsigned IPA
+        working-directory: ios
+        run: |
+          mkdir -p build/Payload
+          cp -R build/RealCam.xcarchive/Products/Applications/RealCam.app build/Payload/
+          (cd build && zip -r RealCam.ipa Payload >/dev/null)
+          ls -lh build/RealCam.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RealCam-unsigned-ipa
+          path: ios/build/RealCam.ipa
+          if-no-files-found: error
