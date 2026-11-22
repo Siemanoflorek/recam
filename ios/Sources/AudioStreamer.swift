@@ -16,6 +16,8 @@ final class AudioStreamer: NSObject, ObservableObject {
     // =========================================================
 
     private let engine = AVAudioEngine()
+    private let silenceEngine = AVAudioEngine()   // cisza podtrzymująca życie w tle (bez mikrofonu)
+    private var silenceNode: AVAudioSourceNode?
     private var converter: AVAudioConverter?
     private let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: true)!
@@ -88,10 +90,50 @@ final class AudioStreamer: NSObject, ObservableObject {
     /// Komendy z panelu: {"cmd":"stop"} / {"cmd":"start"}
     private func handleCommand(_ text: String) {
         if text.contains("\"stop\"") {
-            DispatchQueue.main.async { self.paused = true;  self.statusText = "Zatrzymano (panel)" }
+            DispatchQueue.main.async { self.paused = true;  self.statusText = "Zatrzymano (panel)"; self.pauseCapture() }
         } else if text.contains("\"start\"") {
-            DispatchQueue.main.async { self.paused = false; self.statusText = "Nasłuch" }
+            DispatchQueue.main.async { self.paused = false; self.statusText = "Nasłuch"; self.resumeCapture() }
         }
+    }
+
+    // MARK: - Pauza / wznowienie (sterowanie z panelu)
+
+    /// Pauza: wyłącza mikrofon (pomarańczowa kropka gaśnie), ale podtrzymuje
+    /// działanie w tle cichym odtwarzaniem, żeby złapać komendę "wznów".
+    private func pauseCapture() {
+        engine.inputNode.removeTap(onBus: 0)
+        if engine.isRunning { engine.stop() }
+        startSilence()
+    }
+
+    /// Wznowienie: wyłącza ciszę i włącza mikrofon z powrotem (kropka wraca).
+    private func resumeCapture() {
+        stopSilence()
+        startAudio()
+    }
+
+    private func startSilence() {
+        let s = AVAudioSession.sharedInstance()
+        try? s.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+        try? s.setActive(true)
+        if silenceNode == nil {
+            let fmt = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)!
+            let node = AVAudioSourceNode(format: fmt) { isSilence, _, _, abl -> OSStatus in
+                isSilence.pointee = true
+                let buffers = UnsafeMutableAudioBufferListPointer(abl)
+                for b in buffers { if let d = b.mData { memset(d, 0, Int(b.mDataByteSize)) } }
+                return noErr
+            }
+            silenceNode = node
+            silenceEngine.attach(node)
+            silenceEngine.connect(node, to: silenceEngine.mainMixerNode, format: fmt)
+        }
+        silenceEngine.prepare()
+        try? silenceEngine.start()
+    }
+
+    private func stopSilence() {
+        if silenceEngine.isRunning { silenceEngine.stop() }
     }
 
     // MARK: - Audio
@@ -153,8 +195,9 @@ final class AudioStreamer: NSObject, ObservableObject {
         if type == .began {
             engine.inputNode.removeTap(onBus: 0)
             if engine.isRunning { engine.stop() }
+            stopSilence()
         } else if type == .ended {
-            restartAudioWithRetry(0)
+            if paused { startSilence() } else { restartAudioWithRetry(0) }
         }
     }
 
