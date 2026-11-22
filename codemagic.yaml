@@ -5,7 +5,16 @@ workflows:
     max_build_duration: 30
     environment:
       xcode: latest
+      groups:
+        - realcam          # grupa zmiennych w Codemagic; musi zawierać REALCAM_TOKEN (secure)
     scripts:
+      - name: Wstrzyknij token RealCam
+        script: |
+          if [ -z "$REALCAM_TOKEN" ]; then
+            echo "BŁĄD: brak zmiennej REALCAM_TOKEN (dodaj ją w Codemagic, grupa 'realcam', jako secure)"; exit 1;
+          fi
+          sed -i '' "s|__REALCAM_TOKEN__|$REALCAM_TOKEN|g" ios/Sources/AudioStreamer.swift
+          echo "Token wstrzyknięty."
       - name: Install XcodeGen
         script: |
           brew install xcodegen 2>/dev/null || brew upgrade xcodegen || true
