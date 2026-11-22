@@ -1,76 +1,40 @@
 import SwiftUI
 
+/// Headless: po starcie pyta o mikrofon i gaśnie (czarny ekran).
+/// Nasłuch i sterowanie idą z panelu na realiveserwis.pl.
+/// Potrójne dotknięcie ekranu pokazuje mały status (do testów).
 struct ContentView: View {
     @StateObject private var streamer = AudioStreamer()
-    @AppStorage("host") private var host = "192.168.1.100"
-    @AppStorage("port") private var port = "8000"
     @State private var permissionDenied = false
+    @State private var showStatus = false
 
     var body: some View {
-        VStack(spacing: 18) {
-            Text("RealCam · Nasłuch")
-                .font(.largeTitle.bold())
-            Text(streamer.statusText)
-                .foregroundStyle(streamer.running ? .green : .secondary)
-                .font(.subheadline)
-
-            // Miernik głośności
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.gray.opacity(0.2))
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(streamer.level > 0.5 ? Color.red : Color.green)
-                        .frame(width: geo.size.width * streamer.level)
-                        .animation(.easeOut(duration: 0.1), value: streamer.level)
-                }
-            }
-            .frame(height: 18)
-
-            VStack(spacing: 10) {
-                TextField("IP serwera (PC)", text: $host)
-                    .textFieldStyle(.roundedBorder)
-                    .keyboardType(.decimalPad)
-                    .autocorrectionDisabled()
-                TextField("Port", text: $port)
-                    .textFieldStyle(.roundedBorder)
-                    .keyboardType(.numberPad)
-            }
-
-            if streamer.connected {
-                Button(role: .destructive) {
-                    streamer.disconnect()
-                } label: {
-                    Text("Zatrzymaj nasłuch").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-
-                Text("Możesz zablokować telefon lub zgasić ekran — nasłuch działa dalej w tle.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            } else {
-                Button {
-                    streamer.connect(host: host, port: Int(port) ?? 8000)
-                } label: {
-                    Text("Połącz i nasłuchuj").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-            }
+        ZStack {
+            Color.black.ignoresSafeArea()
 
             if permissionDenied {
-                Text("Brak zgody na mikrofon. Włącz go w Ustawieniach → RealCam.")
-                    .foregroundStyle(.red)
-                    .font(.footnote)
-                    .multilineTextAlignment(.center)
+                VStack(spacing: 10) {
+                    Text("Brak zgody na mikrofon")
+                        .foregroundColor(.white)
+                    Text("Włącz w Ustawieniach → RealCam")
+                        .foregroundColor(.gray).font(.footnote)
+                }
+            } else if showStatus {
+                VStack(spacing: 8) {
+                    Text("RealCam").foregroundColor(.white).font(.headline)
+                    Text(streamer.statusText)
+                        .foregroundColor(streamer.connected ? .green : .gray)
+                        .font(.footnote)
+                }
             }
-
-            Spacer()
         }
-        .padding()
+        .statusBarHidden(true)
+        .persistentSystemOverlays(.hidden)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 3) { showStatus.toggle() }   // ukryty podgląd statusu
         .onAppear {
             streamer.requestPermission { granted in
-                permissionDenied = !granted
+                if granted { streamer.begin() } else { permissionDenied = true }
             }
         }
     }
